@@ -363,3 +363,89 @@ async def test_C_read_only_inspection_before_modification(
     settings.coding_run_validation = False
     result = await agent.run(task, plan, tmp_path)
     assert result.success is True
+
+@pytest.mark.anyio
+async def test_F_changeset_authorization_flow(
+    agent: CodingAgent, task: AgentTask, plan: EngineeringPlan, tmp_path: Path
+) -> None:
+    # Set up a ChangeSet that replaces affected_files
+    from forgeai.agents.models import ChangeSet, FileChange, ChangeOperation
+    plan.affected_files = []
+    plan.change_set = ChangeSet(
+        objective="Extract logic",
+        initial_files=[
+            FileChange(file_path="src/main.py", operation=ChangeOperation.MODIFY, rationale=""),
+            FileChange(file_path="src/logic.py", operation=ChangeOperation.CREATE, rationale="")
+        ]
+    )
+
+    call_count = 0
+
+    def factory(req: LLMRequest) -> LLMResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            decision = {
+                "action": "modify",
+                "rationale_summary": "Start",
+                "target_files": [],
+                "completion_requested": False,
+            }
+            return LLMResponse(model="mock", content=json.dumps(decision))
+        elif call_count == 2:
+            return LLMResponse(
+                model="mock",
+                tool_calls=[
+                    LLMToolCall(
+                        id="tc-1",
+                        name="write_file",
+                        arguments={
+                            "path": "src/logic.py",
+                            "content": "def run(): pass",
+                            "overwrite": False,
+                        },
+                    )
+                ],
+            )
+        elif call_count == 3:
+            return LLMResponse(
+                model="mock",
+                tool_calls=[
+                    LLMToolCall(
+                        id="tc-2",
+                        name="write_file",
+                        arguments={
+                            "path": "src/main.py",
+                            "content": "import logic",
+                            "overwrite": False,
+                        },
+                    )
+                ],
+            )
+        elif call_count == 4:
+            decision = {
+                "action": "finish",
+                "rationale_summary": "Done",
+                "target_files": [],
+                "completion_requested": True,
+            }
+            return LLMResponse(model="mock", content=json.dumps(decision))
+            
+        raise RuntimeError("Too many calls")
+
+    agent.llm_client = MockLLMProvider(response_factory=factory)
+    settings.coding_run_validation = False
+    
+    # We must mock git status to show logic.py as an untracked change and main.py as modified
+    # But since we use MockGitService, it's bypassed for actual files, but let's touch them to ensure completeness check passes
+    src_dir = tmp_path / "src"
+    src_dir.mkdir(exist_ok=True)
+    
+    result = await agent.run(task, plan, tmp_path)
+    
+    # Verify success and proper status
+    assert result.success is True
+    assert result.final_phase == CodingPhase.COMPLETED
+    assert plan.change_set.status == "AUTHORIZED"
+    assert "src/logic.py" in plan.change_set.created_files
+    assert "src/main.py" in plan.change_set.modified_files

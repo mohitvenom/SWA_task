@@ -5,6 +5,7 @@ from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, Field
+import uuid
 
 
 class AgentState(str, Enum):
@@ -132,6 +133,111 @@ class PlanStep(BaseModel):
     validation_requirement: str
 
 
+class FileRelationshipType(str, Enum):
+    """Types of relationships between files."""
+
+    IMPORTS = "IMPORTS"
+    IMPORTED_BY = "IMPORTED_BY"
+    DEFINES = "DEFINES"
+    REFERENCES = "REFERENCES"
+    TESTS = "TESTS"
+    CONFIGURES = "CONFIGURES"
+    IMPLEMENTS = "IMPLEMENTS"
+    INTERFACE_FOR = "INTERFACE_FOR"
+    DEPENDS_ON = "DEPENDS_ON"
+    REPLACED_BY = "REPLACED_BY"
+    MOVED_TO = "MOVED_TO"
+    GENERATED_FROM = "GENERATED_FROM"
+
+
+class FileRelationship(BaseModel):
+    """A relationship between two files."""
+
+    source_file: str
+    target_file: str
+    relationship_type: FileRelationshipType
+    reason: str
+    is_deterministic: bool = False
+    confidence: float = Field(ge=0.0, le=1.0, default=1.0)
+
+
+class ChangeOperation(str, Enum):
+    """Types of mutation operations."""
+
+    CREATE = "CREATE"
+    MODIFY = "MODIFY"
+    DELETE = "DELETE"
+
+
+class FileChange(BaseModel):
+    """A planned mutation to a specific file."""
+
+    file_path: str
+    operation: ChangeOperation
+    rationale: str
+
+
+class ScopeExpansionReason(str, Enum):
+    """Reasons for expanding the authorized change scope."""
+
+    DEPENDENCY_DISCOVERY = "DEPENDENCY_DISCOVERY"
+    TEST_DISCOVERY = "TEST_DISCOVERY"
+    EXPLICIT_REQUEST = "EXPLICIT_REQUEST"
+
+
+class ScopeExpansionRequest(BaseModel):
+    """A request to expand the authorized scope."""
+
+    file_path: str
+    reason: ScopeExpansionReason
+    rationale: str
+    source_evidence: str
+
+
+class ScopeExpansionDecision(str, Enum):
+    """The result of a scope expansion request."""
+
+    APPROVED = "APPROVED"
+    REJECTED_EXCLUDED = "REJECTED_EXCLUDED"
+    REJECTED_SENSITIVE = "REJECTED_SENSITIVE"
+    REJECTED_LIMIT_EXCEEDED = "REJECTED_LIMIT_EXCEEDED"
+    REJECTED_OUT_OF_BOUNDS = "REJECTED_OUT_OF_BOUNDS"
+    REJECTED_DUPLICATE = "REJECTED_DUPLICATE"
+
+
+class ScopeExpansionRecord(BaseModel):
+    """An auditable record of a scope expansion decision."""
+
+    request: ScopeExpansionRequest
+    decision: ScopeExpansionDecision
+    decision_reason: str
+
+
+class ChangeSetStatus(str, Enum):
+    """The authorization status of a ChangeSet."""
+
+    PROPOSED = "PROPOSED"
+    AUTHORIZED = "AUTHORIZED"
+    REJECTED = "REJECTED"
+
+
+class ChangeSet(BaseModel):
+    """A bounded, dependency-aware collection of coordinated repository changes."""
+
+    change_set_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    objective: str
+    initial_files: list[FileChange] = Field(default_factory=list)
+    discovered_files: list[FileChange] = Field(default_factory=list)
+    authorized_files: list[str] = Field(default_factory=list)
+    created_files: list[str] = Field(default_factory=list)
+    modified_files: list[str] = Field(default_factory=list)
+    deleted_files: list[str] = Field(default_factory=list)
+    relationships: list[FileRelationship] = Field(default_factory=list)
+    expansion_history: list[ScopeExpansionRecord] = Field(default_factory=list)
+    status: ChangeSetStatus = ChangeSetStatus.PROPOSED
+
+
+
 class EngineeringPlan(BaseModel):
     """A structured plan for executing an engineering task."""
 
@@ -143,6 +249,7 @@ class EngineeringPlan(BaseModel):
     proposed_changes: str
     affected_files: list[str] = Field(default_factory=list)
     excluded_files: list[str] = Field(default_factory=list)
+    change_set: ChangeSet | None = None
     steps: list[PlanStep] = Field(default_factory=list)
     dependencies_to_add: list[str] = Field(default_factory=list)
     tests_to_add_or_update: list[str] = Field(default_factory=list)

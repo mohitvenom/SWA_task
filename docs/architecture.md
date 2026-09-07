@@ -79,6 +79,12 @@ To allow agents to interact with the repository, ForgeAI uses a tightly controll
 - **Tool Capabilities**: Tools are strictly classified into `READ_ONLY`, `MUTATION`, and `EXECUTION`. Currently, only `READ_ONLY` tools (`list_files`, `read_file`, `search_code`) are authorized for autonomous use.
 - **Safe Mutation**: A suite of mutation tools (`write_file`, `edit_file`, `delete_file`) exists utilizing deterministic editing (exact match-and-replace) and atomic writes safely bounded within the workspace. These are not yet enabled for autonomous execution.
 
+## Multi-File Mutations and ChangeSets
+When multiple files need to be modified in a coordinated fashion (e.g. extracting a function and updating imports), ForgeAI models the entire transaction explicitly using a `ChangeSet`.
+- **Dependency-Aware Planning**: The `PlanningAgent` proposes a `ChangeSet` encompassing explicitly requested files and any dependency-discovered files, mapping `CREATE`, `MODIFY`, and `DELETE` operations.
+- **Deterministic Scope Expansion**: The `ChangeSetPolicy` intercepts the proposal and deterministically constructs the authorized scope. It applies strict limits (`coding_max_changed_files`), directory exclusions, and security bounds (e.g. `.env` rejection).
+- **Post-Change Validation**: The `CodingAgent` executes changes and relies on the Git workspace for tracking. Before marking a phase `COMPLETED`, it rigorously validates that `actual_changed_files ⊆ authorized_files` and enforces completeness (e.g. files marked for deletion must not exist).
+
 ## Git Workspace Management
 To support safe autonomous coding in the future, ForgeAI uses a strict `GitService` boundary.
 - **Trusted Executions**: All operations are bounded to the application's trusted root using strongly-typed arguments mapped to safe `subprocess` calls. The LLM has no access to raw Git commands or shell execution.

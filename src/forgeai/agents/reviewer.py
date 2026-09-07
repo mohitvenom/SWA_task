@@ -66,7 +66,9 @@ class ReviewAgent:
             "- Provide actionable, specific evidence for any finding.\n\n"
             f"Engineering Plan Objective: {plan.task_interpretation}\n"
             f"Authorized Affected Files: {plan.affected_files}\n"
-            f"Excluded Files: {plan.excluded_files}\n\n"
+            f"Excluded Files: {plan.excluded_files}\n"
+            f"Authorized ChangeSet Context:\n"
+            f"{json.dumps(plan.change_set.model_dump() if plan.change_set else None, indent=2)}\n\n"
             "Decision Schema:\n"
             f"{json.dumps(schema)}"
         )

@@ -16,6 +16,10 @@ from forgeai.agents.models import (
     CodingResult,
     CodingSession,
     EngineeringPlan,
+    ChangeSet,
+    FileChange,
+    ChangeOperation,
+    ChangeSetStatus,
 )
 from forgeai.config.settings import settings
 from forgeai.git.errors import GitError
@@ -31,6 +35,7 @@ from forgeai.tools.errors import SecurityViolationError
 from forgeai.tools.models import ToolCall, ToolCapability, ToolContext
 from forgeai.tools.registry import ToolRegistry
 from forgeai.tools.repository.utils import resolve_safe_path
+from forgeai.policies.changeset import ChangeSetPolicy
 
 
 class CodingPolicy:
@@ -109,22 +114,30 @@ class CodingPolicy:
                 except ValueError:
                     pass
 
-            # Ensure it is in affected_files
+            # Ensure it is in affected_files or authorized ChangeSet
             is_affected = False
-            for aff in plan.affected_files:
+            if plan.change_set and plan.change_set.status == ChangeSetStatus.AUTHORIZED:
                 try:
-                    aff_path = (workspace_root / aff).resolve()
-                    if resolved_target == aff_path or resolved_target.is_relative_to(
-                        aff_path
-                    ):
+                    norm_path = str(resolved_target.relative_to(workspace_root).as_posix())
+                    if norm_path in plan.change_set.authorized_files:
                         is_affected = True
-                        break
                 except ValueError:
                     pass
+            else:
+                for aff in plan.affected_files:
+                    try:
+                        aff_path = (workspace_root / aff).resolve()
+                        if resolved_target == aff_path or resolved_target.is_relative_to(
+                            aff_path
+                        ):
+                            is_affected = True
+                            break
+                    except ValueError:
+                        pass
 
             if not is_affected:
                 raise SecurityViolationError(
-                    f"Path '{target_file}' is not in the authorized affected_files list."
+                    f"Path '{target_file}' is not in the authorized ChangeSet/affected_files."
                 )
 
 
@@ -352,6 +365,20 @@ class CodingAgent:
 
             checkpoint = await self.git_service.create_checkpoint(task.task_id)
             session.checkpoint_hash = checkpoint.commit_hash
+
+            # Initialize and Authorize ChangeSet
+            policy = ChangeSetPolicy(workspace_root)
+            if not plan.change_set:
+                cs = ChangeSet(objective=plan.task_interpretation)
+                for f in plan.affected_files:
+                    cs.initial_files.append(FileChange(file_path=f, operation=ChangeOperation.MODIFY, rationale="Legacy affected_files adaptation"))
+                plan.change_set = cs
+            
+            authorized_cs = policy.authorize_change_set(plan.change_set, plan.excluded_files)
+            if authorized_cs.status == ChangeSetStatus.REJECTED:
+                raise SecurityViolationError("ChangeSet was rejected due to policy violations or empty scope.")
+            plan.change_set = authorized_cs
+            plan.affected_files = authorized_cs.authorized_files # sync for backward compatibility
 
             # Setup system prompt
             self.messages = [
@@ -604,22 +631,56 @@ class CodingAgent:
 
                 # Check affected
                 is_affected = False
-                for aff in plan.affected_files:
+                if plan.change_set and plan.change_set.status == ChangeSetStatus.AUTHORIZED:
                     try:
-                        aff_path = (workspace_root / aff).resolve()
-                        if (
-                            resolved_target == aff_path
-                            or resolved_target.is_relative_to(aff_path)
-                        ):
+                        norm_path = str(resolved_target.relative_to(workspace_root).as_posix())
+                        if norm_path in plan.change_set.authorized_files:
                             is_affected = True
-                            break
                     except ValueError:
                         pass
+                else:
+                    for aff in plan.affected_files:
+                        try:
+                            aff_path = (workspace_root / aff).resolve()
+                            if (
+                                resolved_target == aff_path
+                                or resolved_target.is_relative_to(aff_path)
+                            ):
+                                is_affected = True
+                                break
+                        except ValueError:
+                            pass
 
                 if not is_affected:
                     raise SecurityViolationError(
-                        f"Unauthorized file was modified: {file_path}"
+                        f"Unauthorized file was modified: {file_path}. Not in authorized ChangeSet."
                     )
+                
+            # ChangeSet Completeness Check
+            if plan.change_set and plan.change_set.status == ChangeSetStatus.AUTHORIZED:
+                # If a file was authorized for deletion, make sure it is actually deleted.
+                # (Git status shows D for deleted, which gets included in changed_files,
+                # so the file shouldn't exist on disk)
+                for df in plan.change_set.deleted_files:
+                    try:
+                        resolved_df = resolve_safe_path(workspace_root, df)
+                        if resolved_df.exists():
+                            raise SecurityViolationError(
+                                f"ChangeSet completeness check failed: File '{df}' was scheduled for deletion but still exists."
+                            )
+                    except ValueError:
+                        pass
+                
+                # Check created files exist
+                for cf in plan.change_set.created_files:
+                    try:
+                        resolved_cf = resolve_safe_path(workspace_root, cf)
+                        if not resolved_cf.exists():
+                            raise SecurityViolationError(
+                                f"ChangeSet completeness check failed: File '{cf}' was scheduled for creation but does not exist."
+                            )
+                    except ValueError:
+                        pass
 
             session.current_phase = CodingPhase.COMPLETED
 

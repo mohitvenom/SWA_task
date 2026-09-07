@@ -113,3 +113,15 @@ class EnvironmentDiagnosisError(EnvironmentIntelligenceError):
     """Raised when environment diagnosis fails (e.g., malformed LLM output)."""
 
     pass
+
+
+class ChangeSetValidationError(AgentError):
+    """Raised when a ChangeSet fails deterministic validation."""
+
+    pass
+
+
+class ScopeExpansionError(AgentError):
+    """Raised when an attempt to expand scope is rejected or invalid."""
+
+    pass
