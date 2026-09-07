@@ -92,6 +92,28 @@ To eventually run commands (like tests or linters), ForgeAI utilizes a `SandboxM
 - **Strict Security Limits**: Enforces CPU/Memory limits, timeouts, output truncation, dropped capabilities, and disables network access by default.
 - **Workspace Isolation**: Only mounts the explicit task workspace, preventing access to the host filesystem.
 
+## Dependency & Environment Intelligence
+When validation fails, ForgeAI's `DependencyDiscovery` and `EnvironmentIntelligenceAgent` (Phase 16) provide structured, evidence-based analysis of the project's dependency and runtime state to distinguish *code failures* from *environment failures*.
+
+```
+Validation Failure
+      ↓
+Failure Diagnosis
+      ↓
+Environment Intelligence
+      ↓
+EnvironmentDiagnosis
+      ↓
+Repair Decision
+```
+
+- **Deterministic First**: Python version, declared dependencies, installed packages, and lockfile presence are all discovered without LLM assistance via `sys`, `importlib.metadata`, `tomllib`, `configparser`, and direct filesystem scanning.
+- **Provenance**: Every `DeclaredDependency` carries its `source` (PYPROJECT, REQUIREMENTS, SETUP_CFG, PIPFILE) and `source_file`. Multiple declarations of the same package from different files remain as separate objects.
+- **Fact vs Inference**: `EnvironmentFact.is_deterministic=True` means the fact was established without LLM reasoning. `is_deterministic=False` flags LLM-generated inferences. These are stored in separate `facts` and `inferences` lists on `EnvironmentDiagnosis`.
+- **Read-Only**: `DependencyDiscovery` and `EnvironmentIntelligenceAgent` perform no mutations. No package installation, no file modification, no subprocess execution. Installed packages are detected via `importlib.metadata` only.
+- **Secrets Protection**: `EnvironmentSnapshot` contains no fields for API keys, tokens, passwords, or environment variable values. The LLM receives only pre-computed `EnvironmentFact` objects.
+- **Application Authorization**: `EnvironmentDiagnosis` is a structured report, not an authorization to install packages or mutate environment configuration. Future phases may introduce controlled environment mutation with explicit authorization.
+
 ## Future Concepts
 - **Multi-agent Orchestration**: We will build custom orchestration logic rather than relying on external frameworks (no LangChain/AutoGen).
 - **OmniRoute Boundary**: The LLM provider will be completely decoupled behind an internal abstraction interface, facilitating free-tier and local model testing.

@@ -90,3 +90,26 @@ class RepairPlanValidationError(FailureDiagnosisError):
 
     pass
 
+
+class EnvironmentIntelligenceError(AgentError):
+    """Base exception for environment intelligence failures."""
+
+    pass
+
+
+class DependencyParseError(EnvironmentIntelligenceError):
+    """Raised when a dependency file (pyproject.toml, requirements.txt, etc.) cannot be parsed."""
+
+    pass
+
+
+class EnvironmentSnapshotError(EnvironmentIntelligenceError):
+    """Raised when the environment snapshot cannot be collected."""
+
+    pass
+
+
+class EnvironmentDiagnosisError(EnvironmentIntelligenceError):
+    """Raised when environment diagnosis fails (e.g., malformed LLM output)."""
+
+    pass
