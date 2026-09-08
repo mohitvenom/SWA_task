@@ -120,6 +120,13 @@ Repair Decision
 - **Secrets Protection**: `EnvironmentSnapshot` contains no fields for API keys, tokens, passwords, or environment variable values. The LLM receives only pre-computed `EnvironmentFact` objects.
 - **Application Authorization**: `EnvironmentDiagnosis` is a structured report, not an authorization to install packages or mutate environment configuration. Future phases may introduce controlled environment mutation with explicit authorization.
 
+## Task Memory and Execution History
+To provide contextual continuity across distinct tasks on the same repository, ForgeAI tracks past runs using structured local memory.
+
+- **Context, Not Authority**: Memory is strictly treated as historical context. It is never used to bypass the `ChangeSetPolicy`, authorize tool capabilities, validate paths, or approve sandbox commands.
+- **Graceful Degradation**: Memory failures (e.g., unavailable SQLite file) fail open. The orchestrator continues task execution without historical context rather than rolling back or crashing the application.
+- **Application Level Persistence**: Data is persisted at the application level (e.g., `~/.forgeai/memory.db`), completely isolating the agent's memory database from the target codebase.
+
 ## Future Concepts
 - **Multi-agent Orchestration**: We will build custom orchestration logic rather than relying on external frameworks (no LangChain/AutoGen).
 - **OmniRoute Boundary**: The LLM provider will be completely decoupled behind an internal abstraction interface, facilitating free-tier and local model testing.
