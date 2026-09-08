@@ -12,6 +12,7 @@ from forgeai.agents.models import (
 )
 from forgeai.llm.client import LLMClient
 from forgeai.llm.models import LLMMessage, LLMRequest
+from forgeai.memory.models import MemoryContext
 from forgeai.repository.models import RepositorySnapshot
 
 
@@ -116,6 +117,7 @@ class TestStrategyAgent:
         task: EngineeringTask,
         plan: EngineeringPlan,
         snapshot: RepositorySnapshot,
+        memory_context: MemoryContext | None = None,
     ) -> TestStrategy:
         """
         Generate a validation strategy for the given task and plan.
@@ -150,11 +152,15 @@ class TestStrategyAgent:
             f"{json.dumps(schema)}"
         )
 
+        user_prompt_parts = [f"Generate a test strategy for the following task:\n\n{context}"]
+        if memory_context:
+            user_prompt_parts.append(memory_context.to_structured_string())
+
         messages = [
             LLMMessage(role="system", content=system_prompt),
             LLMMessage(
                 role="user",
-                content=f"Generate a test strategy for the following task:\n\n{context}",
+                content="\n\n".join(user_prompt_parts),
             ),
         ]
 

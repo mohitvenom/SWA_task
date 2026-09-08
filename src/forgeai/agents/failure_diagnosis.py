@@ -21,6 +21,7 @@ from forgeai.agents.models import (
 )
 from forgeai.llm.client import LLMClient
 from forgeai.llm.models import LLMMessage, LLMRequest
+from forgeai.memory.models import MemoryContext
 
 
 class FailureDiagnosisAgent:
@@ -132,6 +133,7 @@ class FailureDiagnosisAgent:
         strategy: TestStrategy | None,
         validation_results: list[dict[str, Any]],
         changed_files: list[str],
+        memory_context: MemoryContext | None = None,
     ) -> FailureDiagnosis:
         """
         Diagnose a validation failure and propose a structured repair plan.
@@ -176,11 +178,15 @@ class FailureDiagnosisAgent:
             f"{json.dumps(schema)}"
         )
 
+        user_prompt_parts = [f"Diagnose the following validation failure:\n\n{context}"]
+        if memory_context:
+            user_prompt_parts.append(memory_context.to_structured_string())
+
         messages = [
             LLMMessage(role="system", content=system_prompt),
             LLMMessage(
                 role="user",
-                content=f"Diagnose the following validation failure:\n\n{context}",
+                content="\n\n".join(user_prompt_parts),
             ),
         ]
 

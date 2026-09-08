@@ -30,6 +30,10 @@ class Settings(BaseSettings):
 
     git_max_diff_bytes: int = 50000
 
+    memory_enabled: bool = False
+    memory_db_path: str = "~/.forgeai/memory.db"
+    memory_max_execution_records: int = 100
+
     model_config = SettingsConfigDict(
         env_prefix="FORGEAI_",
         env_file=".env",

@@ -31,6 +31,7 @@ from forgeai.llm.models import LLMMessage, LLMRequest, LLMToolCall
 from forgeai.agents.reviewer import ReviewAgent
 from forgeai.agents.models import ReviewStatus, ReviewResult, TestStrategy, DiagnosisStatus
 from forgeai.agents.failure_diagnosis import FailureDiagnosisAgent
+from forgeai.memory.models import MemoryContext
 from forgeai.tools.errors import SecurityViolationError
 from forgeai.tools.models import ToolCall, ToolCapability, ToolContext
 from forgeai.tools.registry import ToolRegistry
@@ -326,6 +327,7 @@ class CodingAgent:
         plan: EngineeringPlan,
         workspace_root: Path,
         test_strategy: TestStrategy | None = None,
+        memory_context: MemoryContext | None = None,
     ) -> CodingResult:
         """
         Execute the autonomous coding loop.
@@ -381,11 +383,15 @@ class CodingAgent:
             plan.affected_files = authorized_cs.authorized_files # sync for backward compatibility
 
             # Setup system prompt
+            user_prompt_parts = ["Begin inspection phase. Understand the context before modifying."]
+            if memory_context:
+                user_prompt_parts.append(memory_context.to_structured_string())
+
             self.messages = [
                 LLMMessage(role="system", content=self._get_system_prompt(plan)),
                 LLMMessage(
                     role="user",
-                    content="Begin inspection phase. Understand the context before modifying.",
+                    content="\n\n".join(user_prompt_parts),
                 ),
             ]
 

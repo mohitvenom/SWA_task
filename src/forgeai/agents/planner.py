@@ -9,6 +9,7 @@ from forgeai.agents.errors import PlanValidationError
 from forgeai.agents.models import AgentTask, EngineeringPlan, EngineeringTask
 from forgeai.llm.client import LLMClient
 from forgeai.llm.models import LLMMessage, LLMRequest
+from forgeai.memory.models import MemoryContext
 from forgeai.repository.models import RepositorySnapshot
 
 
@@ -87,7 +88,10 @@ class PlanningAgent:
         return summary
 
     async def plan(
-        self, task: AgentTask | EngineeringTask, repository: RepositorySnapshot
+        self,
+        task: AgentTask | EngineeringTask,
+        repository: RepositorySnapshot,
+        memory_context: MemoryContext | None = None,
     ) -> EngineeringPlan:
         """
         Generate a structured engineering plan for the given task and repository.
@@ -95,6 +99,7 @@ class PlanningAgent:
         Args:
             task: The software engineering task to plan.
             repository: A deterministic snapshot of the target codebase.
+            memory_context: Historical memory context, if any.
 
         Returns:
             A validated EngineeringPlan.
@@ -127,20 +132,22 @@ class PlanningAgent:
             f"{json.dumps(schema)}"
         )
 
+        prompt_parts = []
         if isinstance(task, EngineeringTask):
-            user_prompt = (
-                f"Task Objective: {task.objective}\n"
-                f"Original Request: {task.original_request}\n"
-                f"Requirements: {task.requirements}\n"
-                f"Constraints: {task.constraints}\n"
-                f"Assumptions: {task.assumptions}\n\n"
-                f"--- REPOSITORY CONTEXT ---\n{context_summary}\n"
-            )
+            prompt_parts.append(f"Task Objective: {task.objective}")
+            prompt_parts.append(f"Original Request: {task.original_request}")
+            prompt_parts.append(f"Requirements: {task.requirements}")
+            prompt_parts.append(f"Constraints: {task.constraints}")
+            prompt_parts.append(f"Assumptions: {task.assumptions}\n")
         else:
-            user_prompt = (
-                f"Task Description: {task.description}\n\n"
-                f"--- REPOSITORY CONTEXT ---\n{context_summary}\n"
-            )
+            prompt_parts.append(f"Task Description: {task.description}\n")
+
+        prompt_parts.append(f"--- REPOSITORY CONTEXT ---\n{context_summary}\n")
+
+        if memory_context:
+            prompt_parts.append(memory_context.to_structured_string())
+
+        user_prompt = "\n".join(prompt_parts)
 
         messages = [
             LLMMessage(role="system", content=system_prompt),

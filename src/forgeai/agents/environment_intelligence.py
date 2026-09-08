@@ -45,6 +45,7 @@ from forgeai.agents.environment_models import (
     VersionConstraint,
 )
 from forgeai.agents.errors import DependencyParseError
+from forgeai.memory.models import MemoryContext
 
 if TYPE_CHECKING:
     pass
@@ -846,6 +847,7 @@ class EnvironmentIntelligenceAgent:
         env_snap: EnvironmentSnapshot,
         validation_results: list[dict[str, Any]] | None = None,
         failure_category: str | None = None,
+        memory_context: MemoryContext | None = None,
     ) -> EnvironmentDiagnosis:
         """
         Analyse the dependency/environment state and produce an EnvironmentDiagnosis.
@@ -862,6 +864,11 @@ class EnvironmentIntelligenceAgent:
         facts: list[EnvironmentFact] = []
         inferences: list[EnvironmentFact] = []
         assumptions: list[str] = []
+
+        if memory_context:
+            for failure in memory_context.relevant_failures:
+                if failure.category.value == "ENVIRONMENT":
+                    assumptions.append(f"Historical context: {failure.content}")
 
         # --- Deterministic facts ---
         facts.append(

@@ -13,6 +13,7 @@ from forgeai.agents.models import (
 )
 from forgeai.llm.client import LLMClient
 from forgeai.llm.models import LLMMessage, LLMRequest
+from forgeai.memory.models import MemoryContext
 
 
 class TaskIntelligenceAgent:
@@ -40,12 +41,17 @@ class TaskIntelligenceAgent:
 
         return task
 
-    async def analyze(self, raw_request: str) -> EngineeringTask:
+    async def analyze(
+        self,
+        raw_request: str,
+        memory_context: MemoryContext | None = None,
+    ) -> EngineeringTask:
         """
         Analyze a raw user request and generate a structured EngineeringTask.
 
         Args:
             raw_request: The raw user request.
+            memory_context: Historical memory context, if any.
 
         Returns:
             A validated EngineeringTask.
@@ -70,9 +76,13 @@ class TaskIntelligenceAgent:
             f"{json.dumps(schema)}"
         )
 
+        user_prompt_parts = [raw_request]
+        if memory_context:
+            user_prompt_parts.append(memory_context.to_structured_string())
+
         messages = [
             LLMMessage(role="system", content=system_prompt),
-            LLMMessage(role="user", content=raw_request),
+            LLMMessage(role="user", content="\n\n".join(user_prompt_parts)),
         ]
 
         request = LLMRequest(
