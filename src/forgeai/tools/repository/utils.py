@@ -25,6 +25,10 @@ def resolve_safe_path(workspace_root: Path, path_str: str) -> Path:
         SecurityViolationError: If the path is absolute, outside the root, or sensitive.
     """
     try:
+        # Reject null bytes before pathlib processing — null bytes in paths are
+        # a known injection vector and can bypass extension-based access checks.
+        if "\x00" in path_str:
+            raise SecurityViolationError("Path contains null bytes: injection attempt detected.")
         path = Path(path_str)
     except Exception as e:
         raise SecurityViolationError(f"Invalid path format: {e}")

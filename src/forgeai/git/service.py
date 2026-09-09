@@ -165,6 +165,13 @@ class GitCLIWorkspaceService(GitService):
         clean = re.sub(r"[^\w\-]", "_", task_id)
         if not clean:
             raise GitInvalidBranchError("Sanitized branch name is empty.")
+        # Reject names whose sanitized suffix starts with a dash — these would be
+        # interpreted as flags by the git CLI (e.g. '--all', '-D').
+        if clean.startswith("-"):
+            raise GitInvalidBranchError(
+                f"Invalid task_id: sanitized branch suffix '{clean}' starts with '-' "
+                "and would be interpreted as a CLI flag."
+            )
         return f"forgeai/task/{clean}"
 
     async def create_branch(self, task_id: str) -> GitBranch:
