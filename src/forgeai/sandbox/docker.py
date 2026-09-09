@@ -1,11 +1,11 @@
 """Docker-based implementation of the sandbox."""
 
-import asyncio
 import os
 import time
 import uuid
 from pathlib import Path
 
+from forgeai.execution.runner import ProcessRunner
 from forgeai.sandbox.errors import (
     SandboxCleanupError,
     SandboxConfigurationError,
@@ -24,26 +24,6 @@ class DockerSandbox(Sandbox):
         self.container_id = container_id
         self.config = config
 
-    async def _read_stream(
-        self, stream: asyncio.StreamReader, limit: int
-    ) -> tuple[bytes, bool]:
-        """Read a stream up to the byte limit. Return (data, truncated)."""
-        data = bytearray()
-        truncated = False
-        try:
-            while True:
-                chunk = await stream.read(4096)
-                if not chunk:
-                    break
-                if len(data) + len(chunk) > limit:
-                    data.extend(chunk[: limit - len(data)])
-                    truncated = True
-                    break
-                data.extend(chunk)
-        except Exception:
-            pass
-        return bytes(data), truncated
-
     async def execute(self, request: CommandRequest) -> CommandResult:
         """Execute a command via 'docker exec'."""
         if not request.command:
@@ -59,70 +39,29 @@ class DockerSandbox(Sandbox):
         args.append(self.container_id)
         args.extend(request.command)
 
-        start_time = time.monotonic()
-
         try:
-            process = await asyncio.create_subprocess_exec(
-                *args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                stdin=asyncio.subprocess.DEVNULL,
+            result = await ProcessRunner.run(
+                command=args,
+                timeout=timeout,
+                max_output_bytes=self.config.max_output_bytes,
             )
         except Exception as e:
             raise SandboxExecutionError(f"Failed to start docker exec: {e}") from e
 
-        assert process.stdout is not None
-        assert process.stderr is not None
-
-        timed_out = False
-        try:
-            # We wait for the process with a timeout, reading streams concurrently
-            stdout_task = asyncio.create_task(
-                self._read_stream(process.stdout, self.config.max_output_bytes)
-            )
-            stderr_task = asyncio.create_task(
-                self._read_stream(process.stderr, self.config.max_output_bytes)
-            )
-
-            await asyncio.wait_for(process.wait(), timeout=timeout)
-
-            out, out_truncated = await stdout_task
-            err, err_truncated = await stderr_task
-
-        except asyncio.TimeoutError:
-            timed_out = True
-            try:
-                process.kill()
-            except ProcessLookupError:
-                pass
-
-            out, out_truncated = await stdout_task
-            err, err_truncated = await stderr_task
-
-        duration = time.monotonic() - start_time
-
         return CommandResult(
-            exit_code=process.returncode if not timed_out else None,
-            stdout=out.decode("utf-8", errors="replace"),
-            stderr=err.decode("utf-8", errors="replace"),
-            duration_seconds=duration,
-            timed_out=timed_out,
-            success=process.returncode == 0 and not timed_out,
-            truncated=out_truncated or err_truncated,
+            exit_code=result.exit_code,
+            stdout=result.stdout.decode("utf-8", errors="replace"),
+            stderr=result.stderr.decode("utf-8", errors="replace"),
+            duration_seconds=result.duration_seconds,
+            timed_out=result.timed_out,
+            success=result.exit_code == 0 and not result.timed_out,
+            truncated=result.truncated,
         )
 
     async def destroy(self) -> None:
         """Force remove the Docker container."""
         try:
-            process = await asyncio.create_subprocess_exec(
-                "docker",
-                "rm",
-                "-f",
-                self.container_id,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            await process.wait()
+            await ProcessRunner.run(["docker", "rm", "-f", self.container_id])
         except Exception as e:
             raise SandboxCleanupError(
                 f"Failed to destroy container {self.container_id}: {e}"
@@ -135,14 +74,8 @@ class DockerSandboxManager(SandboxManager):
     async def _check_availability(self) -> None:
         """Check if docker is available and responsive."""
         try:
-            process = await asyncio.create_subprocess_exec(
-                "docker",
-                "info",
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await process.wait()
-            if process.returncode != 0:
+            result = await ProcessRunner.run(["docker", "info"])
+            if result.exit_code != 0:
                 raise SandboxUnavailableError(
                     "Docker daemon is not running or accessible."
                 )
@@ -206,16 +139,14 @@ class DockerSandboxManager(SandboxManager):
         args.extend(["sleep", "infinity"])
 
         try:
-            process = await asyncio.create_subprocess_exec(
-                *args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            out, err = await process.communicate()
+            result = await ProcessRunner.run(args)
+            out = result.stdout
+            err = result.stderr
+            returncode = result.exit_code
         except Exception as e:
             raise SandboxCreationError(f"Failed to execute docker run: {e}") from e
 
-        if process.returncode != 0:
+        if returncode != 0:
             err_str = err.decode("utf-8", errors="replace").strip()
             raise SandboxCreationError(f"Docker container creation failed: {err_str}")
 

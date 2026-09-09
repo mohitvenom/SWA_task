@@ -1,10 +1,8 @@
-"""Implementation of the GitService using asyncio subprocesses."""
-
-import asyncio
 import re
 from pathlib import Path
 
 from forgeai.config.settings import settings
+from forgeai.execution.runner import ProcessRunner
 from forgeai.git.errors import (
     GitBranchExistsError,
     GitCheckoutError,
@@ -58,21 +56,20 @@ class GitCLIWorkspaceService(GitService):
     async def _run_git(self, *args: str) -> tuple[int, str, str]:
         """Execute a git command safely in the workspace.
 
-        Uses create_subprocess_exec directly to prevent shell injection.
+        Uses ProcessRunner to safely invoke the command while handling timeouts,
+        cancellation, and bounded output reliably across different async runtimes.
         """
         try:
-            proc = await asyncio.create_subprocess_exec(
-                "git",
-                *args,
+            command = ["git"]
+            command.extend(args)
+            result = await ProcessRunner.run(
+                command=command,
                 cwd=str(self.workspace_root),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
             )
-            stdout, stderr = await proc.communicate()
             return (
-                proc.returncode or 0,
-                stdout.decode(errors="replace"),
-                stderr.decode(errors="replace"),
+                result.exit_code or 0,
+                result.stdout.decode(errors="replace"),
+                result.stderr.decode(errors="replace"),
             )
         except FileNotFoundError:
             raise GitUnavailableError("Git executable not found on system PATH.")

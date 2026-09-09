@@ -1,6 +1,5 @@
 """Unit tests for the docker sandbox, mocking the subprocess calls."""
 
-import asyncio
 import os
 from pathlib import Path
 from typing import Any
@@ -8,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from forgeai.execution.runner import ProcessResult
 from forgeai.sandbox.docker import DockerSandbox, DockerSandboxManager
 from forgeai.sandbox.errors import (
     SandboxConfigurationError,
@@ -19,7 +19,7 @@ from forgeai.sandbox.models import CommandRequest, SandboxConfig
 
 @pytest.fixture
 def mock_subprocess() -> Any:  # type: ignore
-    with patch("asyncio.create_subprocess_exec") as mock_exec:
+    with patch("forgeai.sandbox.docker.ProcessRunner.run", new_callable=AsyncMock) as mock_exec:
         yield mock_exec
 
 
@@ -27,24 +27,17 @@ def create_mock_process(
     returncode: int = 0,
     stdout: bytes = b"",
     stderr: bytes = b"",
-) -> AsyncMock:
-    process = AsyncMock()
-    process.returncode = returncode
-
-    process.communicate = AsyncMock(return_value=(stdout, stderr))
-
-    # Mock streams for read() in DockerSandbox.execute
-    stdout_stream = AsyncMock()
-    stdout_stream.read = AsyncMock(side_effect=[stdout, b""])
-    process.stdout = stdout_stream
-
-    stderr_stream = AsyncMock()
-    stderr_stream.read = AsyncMock(side_effect=[stderr, b""])
-    process.stderr = stderr_stream
-
-    process.wait = AsyncMock(return_value=returncode)
-    process.kill = MagicMock()
-    return process
+    timed_out: bool = False,
+    truncated: bool = False,
+) -> ProcessResult:
+    return ProcessResult(
+        exit_code=returncode if not timed_out else None,
+        stdout=stdout,
+        stderr=stderr,
+        timed_out=timed_out,
+        truncated=truncated,
+        duration_seconds=0.1,
+    )
 
 
 @pytest.mark.anyio
@@ -52,12 +45,7 @@ async def test_manager_check_availability_success(mock_subprocess: MagicMock) ->
     mock_subprocess.return_value = create_mock_process(returncode=0)
     manager = DockerSandboxManager()
     await manager._check_availability()
-    mock_subprocess.assert_called_with(
-        "docker",
-        "info",
-        stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.PIPE,
-    )
+    mock_subprocess.assert_called_with(["docker", "info"])
 
 
 @pytest.mark.anyio
@@ -87,7 +75,7 @@ async def test_manager_create_sandbox_success(
     assert sandbox.container_id == "fake-container-id"
 
     # Verify docker run arguments
-    args = mock_subprocess.call_args_list[1][0]
+    args = mock_subprocess.call_args_list[1][0][0]
     assert "docker" in args
     assert "run" in args
     assert "-d" in args
@@ -144,19 +132,14 @@ async def test_sandbox_execute_success(mock_subprocess: MagicMock) -> None:
     assert result.timed_out is False
     assert result.truncated is False
 
-    args = mock_subprocess.call_args[0]
-    assert args == ("docker", "exec", "-i", "test-id", "echo", "hello")
+    kwargs = mock_subprocess.call_args.kwargs
+    assert kwargs["command"] == ["docker", "exec", "-i", "test-id", "echo", "hello"]
 
 
 @pytest.mark.anyio
 async def test_sandbox_execute_timeout(mock_subprocess: MagicMock) -> None:
-    # We want wait() to block, simulating a timeout
-    async def mock_wait() -> int:
-        await asyncio.sleep(10)
-        return 0
-
-    process = create_mock_process(stdout=b"partial")
-    process.wait = mock_wait
+    # ProcessRunner handles timeout internally, so we just mock it returning a timeout
+    process = create_mock_process(stdout=b"partial", timed_out=True)
     mock_subprocess.return_value = process
 
     sandbox = DockerSandbox("test-id", SandboxConfig())
@@ -168,16 +151,12 @@ async def test_sandbox_execute_timeout(mock_subprocess: MagicMock) -> None:
     assert result.timed_out is True
     assert result.exit_code is None
     assert result.stdout == "partial"
-    process.kill.assert_called_once()
 
 
 @pytest.mark.anyio
 async def test_sandbox_execute_truncation(mock_subprocess: MagicMock) -> None:
-    # Send more than limit bytes
-    large_data = b"x" * 200
-
-    process = create_mock_process(returncode=0)
-    process.stdout.read = AsyncMock(side_effect=[large_data, b""])  # type: ignore
+    large_data = b"x" * 100
+    process = create_mock_process(returncode=0, stdout=large_data, truncated=True)
     mock_subprocess.return_value = process
 
     config = SandboxConfig(max_output_bytes=100)
@@ -200,11 +179,4 @@ async def test_sandbox_destroy(mock_subprocess: MagicMock) -> None:
     sandbox = DockerSandbox("test-id", SandboxConfig())
     await sandbox.destroy()
 
-    mock_subprocess.assert_called_with(
-        "docker",
-        "rm",
-        "-f",
-        "test-id",
-        stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.DEVNULL,
-    )
+    mock_subprocess.assert_called_with(["docker", "rm", "-f", "test-id"])

@@ -310,6 +310,16 @@ class CodingAgent:
         if not session.checkpoint_hash or not session.branch:
             return
 
+        status = await self.git_service.get_status()
+        dirty_tracked = [
+            c.path for c in status.staged_changes + status.unstaged_changes
+        ]
+        if dirty_tracked:
+            try:
+                await self.git_service.rollback_files(dirty_tracked)
+            except GitError:
+                pass
+
         checkpoint = WorkspaceCheckpoint(
             task_id=session.task_id,
             commit_hash=session.checkpoint_hash,

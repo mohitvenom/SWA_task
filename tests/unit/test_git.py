@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from forgeai.execution.runner import ProcessResult
+
 from forgeai.git.errors import (
     GitBranchExistsError,
     GitCommitError,
@@ -63,33 +65,34 @@ def test_not_directory_workspace(tmp_path: Path) -> None:
 
 
 @pytest.mark.anyio
-@patch("asyncio.create_subprocess_exec")
+@patch("forgeai.git.service.ProcessRunner.run")
 async def test_run_git_success(
-    mock_exec: AsyncMock, git_service: GitCLIWorkspaceService
+    mock_run: AsyncMock, git_service: GitCLIWorkspaceService
 ) -> None:
-    mock_proc = AsyncMock()
-    mock_proc.communicate.return_value = (b"output", b"")
-    mock_proc.returncode = 0
-    mock_exec.return_value = mock_proc
+    mock_run.return_value = ProcessResult(
+        exit_code=0,
+        stdout=b"output",
+        stderr=b"",
+        timed_out=False,
+        truncated=False,
+        duration_seconds=0.1
+    )
 
     code, stdout, stderr = await git_service._run_git("status")
 
     assert code == 0
     assert stdout == "output"
     assert stderr == ""
-    mock_exec.assert_called_once_with(
-        "git",
-        "status",
+    mock_run.assert_called_once_with(
+        command=["git", "status"],
         cwd=str(git_service.workspace_root),
-        stdout=-1,
-        stderr=-1,
     )
 
 
 @pytest.mark.anyio
-@patch("asyncio.create_subprocess_exec", side_effect=FileNotFoundError)
+@patch("forgeai.git.service.ProcessRunner.run", side_effect=FileNotFoundError)
 async def test_run_git_missing_executable(
-    mock_exec: AsyncMock, git_service: GitCLIWorkspaceService
+    mock_run: AsyncMock, git_service: GitCLIWorkspaceService
 ) -> None:
     with pytest.raises(GitUnavailableError, match="Git executable not found"):
         await git_service._run_git("status")
