@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from forgeai.agents.errors import AgentDecisionParseError
 from forgeai.agents.models import (
     AgentTask,
+    EngineeringTask,
     EngineeringPlan,
     ReviewDecision,
     ReviewResult,
@@ -187,7 +188,7 @@ class ReviewAgent:
 
     async def run(
         self,
-        task: AgentTask,
+        task: AgentTask | EngineeringTask,
         plan: EngineeringPlan,
         diff: GitDiff,
         changed_files: list[str],

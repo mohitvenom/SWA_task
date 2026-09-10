@@ -482,3 +482,34 @@ class FailureDiagnosis(BaseModel):
     confidence: float
     repair_plan: RepairPlan | None = None
     status: DiagnosisStatus = DiagnosisStatus.DIAGNOSED
+
+
+class ExecutionStatus(str, Enum):
+    """The final status of the autonomous execution lifecycle."""
+
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    ROLLED_BACK = "ROLLED_BACK"
+    NEEDS_CLARIFICATION = "NEEDS_CLARIFICATION"
+    SECURITY_REJECTED = "SECURITY_REJECTED"
+
+
+class ExecutionResult(BaseModel):
+    """The structured result of an end-to-end autonomous execution."""
+
+    execution_id: str
+    task_id: str | None = None
+    status: ExecutionStatus
+    summary: str
+    changed_files: list[str] = Field(default_factory=list)
+    validation_results: list[dict[str, Any]] = Field(default_factory=list)
+    review_result: ReviewResult | None = None
+    repair_count: int = 0
+    duration: float = 0.0
+    git_result: dict[str, Any] | None = None
+    failure_information: str | None = None
+
+    @property
+    def success(self) -> bool:
+        """True only if the execution status is strictly COMPLETED."""
+        return self.status == ExecutionStatus.COMPLETED

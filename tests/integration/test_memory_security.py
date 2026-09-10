@@ -99,6 +99,7 @@ async def test_scenario_C_memory_store_unavailable(repo_dir: Path) -> None:
     
     settings.memory_enabled = True
     settings.memory_db_path = "/invalid_db_path_that_fails/memory.db"
+    settings.autonomous_execution_enabled = True
     
     store = SQLiteMemoryStore(db_path=Path(settings.memory_db_path))
     git_service = mock.AsyncMock()
@@ -112,6 +113,8 @@ async def test_scenario_C_memory_store_unavailable(repo_dir: Path) -> None:
                 return LLMResponse(model="mock", content='{"plan_id":"p1","task_id":"t1","task_description":"x","task_interpretation":"x","proposed_changes":"x","validation_strategy":"none","affected_files":["src/foo.py"],"excluded_files":[],"confidence":1.0,"status":"AUTHORIZED","change_set":{"objective":"x","initial_files":[{"file_path":"src/foo.py","operation":"MODIFY","rationale":""}]}}')
             elif "Senior Test Strategy" in request.messages[0].content:
                 return LLMResponse(model="mock", content='{"task_id":"t1","validation_goals":[],"test_cases":[],"relevant_existing_tests":[],"proposed_tests":[],"validation_commands":[]}')
+            elif "Environment Intelligence Agent" in request.messages[0].content:
+                return LLMResponse(model="mock", content='{"category":"NO_ISSUE_DETECTED","summary":"ok","facts":[],"inferences":[],"dependency_issues":[],"recommended_action":"","assumptions":[]}')
             return LLMResponse(model="mock", content='{"action":"finish","completion_requested":true,"rationale_summary":"done"}')
 
     llm = DummyLLM()
@@ -119,11 +122,18 @@ async def test_scenario_C_memory_store_unavailable(repo_dir: Path) -> None:
     orchestrator = ApplicationOrchestrator(llm, registry, git_service)
     
     with mock.patch("forgeai.agents.coder.CodingAgent.run", new_callable=mock.AsyncMock) as mock_run:
-        mock_run.return_value = mock.Mock(success=True, error_message=None)
+        from forgeai.agents.models import CodingPhase, CodingResult, CodingSession
+        mock_run.return_value = CodingResult(
+            task_id="t1",
+            success=True,
+            final_phase=CodingPhase.COMPLETED,
+            session=CodingSession(session_id="s1", task_id="t1", plan_id="p1"),
+            summary="Mock success"
+        )
         result = await orchestrator.execute_task("Do something", repo_dir)
         
-    assert "error" not in result, f"Orchestrator failed with error: {result.get('error')}"
-    assert result["success"] is True
+    assert result.failure_information is None, f"Orchestrator failed with error: {result.failure_information}"
+    assert result.success is True
 
 
 def test_scenario_D_sensitive_path_rejection(repo_dir: Path):

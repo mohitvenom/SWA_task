@@ -11,6 +11,9 @@ class Settings(BaseSettings):
 
     agent_max_iterations: int = 10
 
+    autonomous_execution_enabled: bool = False
+    max_execution_duration: int = 3600
+
     coding_max_iterations: int = 30
     coding_max_tool_calls: int = 100
     coding_max_repair_iterations: int = 5

@@ -16,6 +16,7 @@ from forgeai.agents.models import (
     CodingResult,
     CodingSession,
     EngineeringPlan,
+    EngineeringTask,
     ChangeSet,
     FileChange,
     ChangeOperation,
@@ -333,11 +334,13 @@ class CodingAgent:
 
     async def run(
         self,
-        task: AgentTask,
+        task: EngineeringTask,
         plan: EngineeringPlan,
         workspace_root: Path,
         test_strategy: TestStrategy | None = None,
         memory_context: MemoryContext | None = None,
+        branch_name: str | None = None,
+        checkpoint_hash: str | None = None,
     ) -> CodingResult:
         """
         Execute the autonomous coding loop.
@@ -352,7 +355,7 @@ class CodingAgent:
         """
         session = CodingSession(
             session_id=str(uuid.uuid4()),
-            task_id=task.task_id,
+            task_id=task.task_id or "",
             plan_id=plan.plan_id,
             current_phase=CodingPhase.INITIALIZING,
         )
@@ -370,13 +373,19 @@ class CodingAgent:
                     "Workspace must be completely clean before coding."
                 )
 
-            branch = await self.git_service.create_branch(
-                f"forgeai/task/{task.task_id}"
-            )
-            session.branch = branch.name
+            if branch_name:
+                session.branch = branch_name
+            else:
+                branch = await self.git_service.create_branch(
+                    f"forgeai/task/{task.task_id or ''}"
+                )
+                session.branch = branch.name
 
-            checkpoint = await self.git_service.create_checkpoint(task.task_id)
-            session.checkpoint_hash = checkpoint.commit_hash
+            if checkpoint_hash:
+                session.checkpoint_hash = checkpoint_hash
+            else:
+                checkpoint = await self.git_service.create_checkpoint(task.task_id or "")
+                session.checkpoint_hash = checkpoint.commit_hash
 
             # Initialize and Authorize ChangeSet
             policy = ChangeSetPolicy(workspace_root)
@@ -711,7 +720,7 @@ class CodingAgent:
                 commit_hash = commit_obj.commit_hash
 
             return CodingResult(
-                task_id=task.task_id,
+                task_id=task.task_id or "",
                 success=True,
                 final_phase=session.current_phase,
                 session=session,
@@ -729,6 +738,9 @@ class CodingAgent:
             LLMError,
             GitError,
         ) as e:
+            if checkpoint_hash:
+                raise e
+            
             session.current_phase = CodingPhase.FAILED
 
             # Rollback
@@ -736,7 +748,7 @@ class CodingAgent:
             session.current_phase = CodingPhase.ROLLED_BACK
 
             return CodingResult(
-                task_id=task.task_id,
+                task_id=task.task_id or "",
                 success=False,
                 final_phase=session.current_phase,
                 session=session,
@@ -746,11 +758,14 @@ class CodingAgent:
                 summary="Coding task failed and was rolled back.",
             )
         except Exception as e:
+            if checkpoint_hash:
+                raise e
+                
             session.current_phase = CodingPhase.FAILED
             await self._rollback(session)
             session.current_phase = CodingPhase.ROLLED_BACK
             return CodingResult(
-                task_id=task.task_id,
+                task_id=task.task_id or "",
                 success=False,
                 final_phase=session.current_phase,
                 session=session,
