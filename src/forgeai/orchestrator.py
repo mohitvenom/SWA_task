@@ -4,9 +4,10 @@ ForgeAI Application Orchestrator.
 Unifies the agent lifecycle across all phases.
 """
 
+import logging
+import time
 import uuid
 from pathlib import Path
-from typing import Any
 
 import anyio
 
@@ -14,14 +15,10 @@ from forgeai.agents.coder import CodingAgent
 from forgeai.agents.environment_intelligence import DependencyDiscovery, EnvironmentIntelligenceAgent
 from forgeai.agents.failure_diagnosis import FailureDiagnosisAgent
 from forgeai.agents.models import (
-    AgentTask,
-    CodingPhase,
-    EngineeringPlan,
     EngineeringTask,
     ExecutionResult,
     ExecutionStatus,
     TaskIntelligenceStatus,
-    TestStrategy,
 )
 from forgeai.agents.planner import PlanningAgent
 from forgeai.agents.reviewer import ReviewAgent
@@ -37,6 +34,8 @@ from forgeai.memory.store import SQLiteMemoryStore
 from forgeai.repository.scanner import RepositoryScanner
 from forgeai.tools.errors import SecurityViolationError
 from forgeai.tools.registry import ToolRegistry
+
+logger = logging.getLogger("forgeai.orchestrator")
 
 
 class ApplicationOrchestrator:
@@ -71,18 +70,33 @@ class ApplicationOrchestrator:
             pass
 
     async def execute_task(self, raw_request: str, workspace_root: Path) -> ExecutionResult:
-        """Execute the full autonomous software engineering lifecycle."""
+        """Execute the full autonomous software engineering lifecycle.
+
+        Args:
+            raw_request: The user's natural-language task description.
+            workspace_root: Absolute path to the Git workspace root.
+
+        Returns:
+            A structured ExecutionResult describing the terminal outcome.
+            All expected failure modes are represented as non-COMPLETED statuses;
+            internal exceptions never leak through this boundary.
+        """
         task_id = str(uuid.uuid4())
         execution_id = str(uuid.uuid4())
+        start_time = time.monotonic()
+
+        logger.info("[%s] Starting execution: %r", execution_id, raw_request[:120])
 
         if not settings.autonomous_execution_enabled:
+            logger.warning("[%s] Autonomous execution is disabled by configuration.", execution_id)
             return ExecutionResult(
                 execution_id=execution_id,
                 task_id=task_id,
                 status=ExecutionStatus.SECURITY_REJECTED,
                 summary="Autonomous execution disabled by configuration",
+                duration=time.monotonic() - start_time,
             )
-        
+
         # Get repository identity
         try:
             repo_identity = workspace_root.name
@@ -120,25 +134,29 @@ class ApplicationOrchestrator:
         try:
             with anyio.fail_after(settings.max_execution_duration):
                 # 1. Task Intelligence
+                logger.info("[%s] Phase: TASK_INTELLIGENCE", execution_id)
                 await self._log_event(execution_id, "TASK_INTELLIGENCE", "START", "Starting task intelligence")
                 task_agent = TaskIntelligenceAgent(self.llm)
                 eng_task = await task_agent.analyze(raw_request, memory_context=memory_context)
                 await self._log_event(execution_id, "TASK_INTELLIGENCE", "SUCCESS", "Parsed engineering task")
 
                 if eng_task.status in (TaskIntelligenceStatus.NEEDS_CLARIFICATION, TaskIntelligenceStatus.REJECTED):
+                    logger.info("[%s] Task requires clarification (status=%s).", execution_id, eng_task.status.value)
                     await self._log_event(execution_id, "TASK_INTELLIGENCE", "TERMINATED", "Needs clarification")
                     return ExecutionResult(
                         execution_id=execution_id,
                         task_id=task_id,
                         status=ExecutionStatus.NEEDS_CLARIFICATION,
                         summary=f"Task intelligence returned {eng_task.status.value}",
+                        duration=time.monotonic() - start_time,
                     )
 
                 # 2. Repository & Environment Intelligence
+                logger.info("[%s] Phase: REPOSITORY_INTELLIGENCE", execution_id)
                 await self._log_event(execution_id, "REPOSITORY_INTELLIGENCE", "START", "Analyzing repository")
                 repo_scanner = RepositoryScanner(workspace_root)
                 snapshot = repo_scanner.scan()
-                
+
                 dep_discovery = DependencyDiscovery(workspace_root)
                 dep_snap, env_snap = dep_discovery.discover()
                 env_agent = EnvironmentIntelligenceAgent(self.llm)
@@ -146,23 +164,26 @@ class ApplicationOrchestrator:
                 await self._log_event(execution_id, "REPOSITORY_INTELLIGENCE", "SUCCESS", "Snapshot created")
 
                 # 3. Planning
+                logger.info("[%s] Phase: PLANNING", execution_id)
                 await self._log_event(execution_id, "PLANNING", "START", "Generating plan")
                 planning_agent = PlanningAgent(self.llm)
                 plan = await planning_agent.plan(eng_task, snapshot, memory_context=memory_context)
                 await self._log_event(execution_id, "PLANNING", "SUCCESS", "Plan authorized")
 
                 # 4. Test Strategy
+                logger.info("[%s] Phase: TEST_STRATEGY", execution_id)
                 await self._log_event(execution_id, "TEST_STRATEGY", "START", "Designing test strategy")
                 strategy_agent = TestStrategyAgent(self.llm)
                 strategy = await strategy_agent.generate_strategy(eng_task, plan, snapshot, memory_context=memory_context)
                 await self._log_event(execution_id, "TEST_STRATEGY", "SUCCESS", "Test strategy generated")
 
                 # Git Transaction
+                logger.info("[%s] Phase: GIT_TRANSACTION — creating branch and checkpoint", execution_id)
                 await self._log_event(execution_id, "GIT_TRANSACTION", "START", "Initiating Git transaction")
                 status = await self.git.get_status()
                 if not status.is_clean:
                     raise SecurityViolationError("Workspace must be completely clean before coding.")
-                
+
                 branch = await self.git.create_branch(f"forgeai/task/{task_id}")
                 branch_name = branch.name
                 checkpoint = await self.git.create_checkpoint(task_id)
@@ -171,21 +192,24 @@ class ApplicationOrchestrator:
 
                 # 5. Coding & Validation & Repair
                 mutation_started = True
+                logger.info("[%s] Phase: CODING", execution_id)
                 await self._log_event(execution_id, "CODING", "START", "Executing coding iterations")
                 failure_agent = FailureDiagnosisAgent(self.llm)
                 review_agent = ReviewAgent(self.llm, self.tools)
                 coding_agent = CodingAgent(
                     self.llm, self.tools, self.git, review_agent, failure_agent
                 )
-                
+
                 coding_result = await coding_agent.run(
                     eng_task, plan, workspace_root, strategy, memory_context=memory_context,
                     branch_name=branch_name, checkpoint_hash=checkpoint_hash
                 )
-                
+
                 commit_completed = coding_result.committed
 
                 if coding_result.success and coding_result.final_phase.value == "COMPLETED":
+                    elapsed = time.monotonic() - start_time
+                    logger.info("[%s] Execution COMPLETED in %.1fs.", execution_id, elapsed)
                     await self._log_event(execution_id, "CODING", "SUCCESS", "Coding task completed")
                     return ExecutionResult(
                         execution_id=execution_id,
@@ -197,15 +221,21 @@ class ApplicationOrchestrator:
                         review_result=coding_result.review_result,
                         repair_count=coding_result.session.repair_count,
                         git_result={"commit_hash": coding_result.commit_hash} if commit_completed else None,
+                        duration=elapsed,
                     )
                 else:
+                    elapsed = time.monotonic() - start_time
+                    logger.warning(
+                        "[%s] Coding phase FAILED after %.1fs: %s",
+                        execution_id, elapsed, coding_result.error_message,
+                    )
                     await self._log_event(execution_id, "CODING", "FAILURE", f"Coding task failed: {coding_result.error_message}")
                     # Trigger rollback manually since Orchestrator owns the rollback
                     if checkpoint_created and not commit_completed:
                         await self.git.restore_checkpoint(WorkspaceCheckpoint(
                             task_id=task_id,
-                            commit_hash=checkpoint_hash,
-                            branch=branch_name,
+                            commit_hash=checkpoint_hash,  # type: ignore[arg-type]
+                            branch=branch_name,  # type: ignore[arg-type]
                             status=await self.git.get_status()
                         ))
                     return ExecutionResult(
@@ -217,47 +247,55 @@ class ApplicationOrchestrator:
                         changed_files=coding_result.changed_files,
                         validation_results=coding_result.validation_results,
                         repair_count=coding_result.session.repair_count,
+                        duration=elapsed,
                     )
 
         except BaseException as e:
+            elapsed = time.monotonic() - start_time
             # Handle cancellation, timeouts, and errors state-awarely
             is_cancellation = isinstance(e, (anyio.get_cancelled_exc_class(), TimeoutError))
             is_security = isinstance(e, SecurityViolationError)
-            
+
             terminal_status = ExecutionStatus.SECURITY_REJECTED if is_security else ExecutionStatus.FAILED
-            
+
             error_msg = str(e)
             if isinstance(e, TimeoutError):
                 error_msg = "Execution timed out"
             elif is_cancellation:
                 error_msg = "Execution was cancelled"
-            
+
+            logger.warning(
+                "[%s] Execution terminated after %.1fs (%s): %s",
+                execution_id, elapsed, terminal_status.value, error_msg,
+            )
             await self._log_event(execution_id, "ORCHESTRATOR", "TERMINATED", error_msg, category="SYSTEM")
-            
+
             # Rollback only if we have a checkpoint and didn't successfully commit
             if checkpoint_created and not commit_completed:
                 try:
                     await self.git.restore_checkpoint(WorkspaceCheckpoint(
                         task_id=task_id,
-                        commit_hash=checkpoint_hash, # type: ignore
-                        branch=branch_name, # type: ignore
+                        commit_hash=checkpoint_hash,  # type: ignore[arg-type]
+                        branch=branch_name,  # type: ignore[arg-type]
                         status=await self.git.get_status()
                     ))
                     if not is_security:
                         terminal_status = ExecutionStatus.ROLLED_BACK
+                    logger.info("[%s] Rollback completed.", execution_id)
                 except Exception as rollback_e:
                     error_msg += f" | Rollback failed: {rollback_e}"
-            
-            # Record failed execution state
+                    logger.error("[%s] Rollback failed: %s", execution_id, rollback_e)
+
             result = ExecutionResult(
                 execution_id=execution_id,
                 task_id=task_id,
                 status=terminal_status,
                 summary=error_msg,
                 failure_information=error_msg,
+                duration=elapsed,
             )
-            
+
             if isinstance(e, anyio.get_cancelled_exc_class()):
                 raise e
-            
+
             return result
