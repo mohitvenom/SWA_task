@@ -37,6 +37,15 @@ class Settings(BaseSettings):
     memory_db_path: str = "~/.forgeai/memory.db"
     memory_max_execution_records: int = 100
 
+    # Workspace authorization — list of absolute paths that may be used as
+    # workspace roots via the API.  Empty list = unrestricted (dev/test only).
+    # Production deployments MUST populate this to prevent arbitrary workspace
+    # access.
+    allowed_workspace_roots: list[str] = []
+
+    # Maximum length (characters) of a task string accepted via the API.
+    api_task_max_length: int = 16_000
+
     model_config = SettingsConfigDict(
         env_prefix="FORGEAI_",
         env_file=".env",

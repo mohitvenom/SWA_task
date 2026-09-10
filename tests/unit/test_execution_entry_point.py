@@ -221,6 +221,7 @@ class TestExecuteEndpointStatusCodes:
     def _post(self, client: TestClient, status: ExecutionStatus) -> Any:
         mock_result = _make_execution_result(status)
         with (
+            patch("forgeai.api.main.validate_workspace", return_value=Path("/valid")),
             patch("forgeai.api.main._build_orchestrator") as mock_build,
         ):
             mock_orch = MagicMock()
