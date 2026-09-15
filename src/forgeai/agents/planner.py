@@ -11,6 +11,7 @@ from forgeai.llm.client import LLMClient
 from forgeai.llm.models import LLMMessage, LLMRequest
 from forgeai.memory.models import MemoryContext
 from forgeai.repository.models import RepositorySnapshot
+from forgeai.config.settings import settings
 
 
 class PlanningAgent:
@@ -154,7 +155,7 @@ class PlanningAgent:
             LLMMessage(role="user", content=user_prompt),
         ]
 
-        request = LLMRequest(messages=messages, temperature=0.2, model="planning-model")
+        request = LLMRequest(messages=messages, temperature=0.2, model=settings.omniroute_default_model)
 
         response = await self.llm.generate(request)
 

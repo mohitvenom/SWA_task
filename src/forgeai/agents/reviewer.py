@@ -21,6 +21,7 @@ from forgeai.llm.models import LLMMessage, LLMRequest, LLMToolCall
 from forgeai.tools.errors import SecurityViolationError
 from forgeai.tools.models import ToolCall, ToolCapability, ToolContext
 from forgeai.tools.registry import ToolRegistry
+from forgeai.config.settings import settings
 
 
 class ReviewPolicy:
@@ -128,7 +129,7 @@ class ReviewAgent:
         schemas = self.tool_registry.get_openai_schemas()
 
         request = LLMRequest(
-            model="default",
+            model=settings.omniroute_default_model,
             messages=self.messages,
             temperature=0.0,
             tools=schemas,

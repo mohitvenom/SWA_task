@@ -153,7 +153,7 @@ class AgentOrchestrator:
             ]
 
         request = LLMRequest(
-            model="default", messages=self.messages, temperature=0.0, tools=schemas
+            model=settings.omniroute_default_model, messages=self.messages, temperature=0.0, tools=schemas
         )
         response = await self.llm_client.generate(request)
 

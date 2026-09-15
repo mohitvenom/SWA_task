@@ -92,6 +92,50 @@ class ProcessRunner:
                     exit_code = process.returncode
         except TimeoutError:
             timed_out = True
+        except NotImplementedError:
+            # Fallback for Windows asyncio loops (like SelectorEventLoop) that don't support subprocesses
+            def _sync_run() -> ProcessResult:
+                start = time.monotonic()
+                try:
+                    res = subprocess.run(
+                        command,
+                        cwd=cwd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        stdin=subprocess.DEVNULL,
+                        timeout=timeout,
+                    )
+                    dur = time.monotonic() - start
+                    out = res.stdout
+                    err = res.stderr
+                    trunc = False
+                    if len(out) > max_output_bytes:
+                        out = out[:max_output_bytes]
+                        trunc = True
+                    if len(err) > max_output_bytes:
+                        err = err[:max_output_bytes]
+                        trunc = True
+                    return ProcessResult(
+                        exit_code=res.returncode,
+                        stdout=out,
+                        stderr=err,
+                        timed_out=False,
+                        truncated=trunc,
+                        duration_seconds=dur,
+                    )
+                except subprocess.TimeoutExpired as exc:
+                    dur = time.monotonic() - start
+                    out = exc.stdout or b""
+                    err = exc.stderr or b""
+                    return ProcessResult(
+                        exit_code=None,
+                        stdout=out[:max_output_bytes],
+                        stderr=err[:max_output_bytes],
+                        timed_out=True,
+                        truncated=True,
+                        duration_seconds=dur,
+                    )
+            return await anyio.to_thread.run_sync(_sync_run)
         except Exception as e:
             # We let unexpected exceptions bubble up, but not timeouts.
             raise e

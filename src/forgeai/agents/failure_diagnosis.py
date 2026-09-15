@@ -22,6 +22,7 @@ from forgeai.agents.models import (
 from forgeai.llm.client import LLMClient
 from forgeai.llm.models import LLMMessage, LLMRequest
 from forgeai.memory.models import MemoryContext
+from forgeai.config.settings import settings
 
 
 class FailureDiagnosisAgent:
@@ -190,7 +191,7 @@ class FailureDiagnosisAgent:
             ),
         ]
 
-        request = LLMRequest(messages=messages, temperature=0.1, model="failure-diagnosis-model")
+        request = LLMRequest(messages=messages, temperature=0.1, model=settings.omniroute_default_model)
         
         response = await self.llm.generate(request)
 

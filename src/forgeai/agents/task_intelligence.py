@@ -2,6 +2,7 @@
 
 import json
 import uuid
+from forgeai.config.settings import settings
 
 from pydantic import ValidationError
 
@@ -88,7 +89,7 @@ class TaskIntelligenceAgent:
         request = LLMRequest(
             messages=messages,
             temperature=0.1,
-            model="task-intelligence-model"
+            model=settings.omniroute_default_model
         )
 
         response = await self.llm.generate(request)

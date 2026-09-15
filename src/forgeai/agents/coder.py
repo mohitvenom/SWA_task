@@ -273,7 +273,7 @@ class CodingAgent:
         schemas = self.tool_registry.get_openai_schemas()
 
         request = LLMRequest(
-            model="default",
+            model=settings.omniroute_default_model,
             messages=self.messages,
             temperature=0.0,
             tools=schemas,
@@ -564,7 +564,7 @@ class CodingAgent:
                     continue
 
                 if decision:
-                    if decision.completion_requested:
+                    if decision.action == "finish" or decision.completion_requested:
                         if session.current_phase in (
                             CodingPhase.INSPECTING,
                             CodingPhase.IMPLEMENTING,
@@ -738,7 +738,7 @@ class CodingAgent:
             LLMError,
             GitError,
         ) as e:
-            if checkpoint_hash:
+            if checkpoint_hash is not None:
                 raise e
             
             session.current_phase = CodingPhase.FAILED
@@ -758,7 +758,7 @@ class CodingAgent:
                 summary="Coding task failed and was rolled back.",
             )
         except Exception as e:
-            if checkpoint_hash:
+            if checkpoint_hash is not None:
                 raise e
                 
             session.current_phase = CodingPhase.FAILED
