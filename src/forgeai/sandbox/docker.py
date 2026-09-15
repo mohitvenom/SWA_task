@@ -31,7 +31,7 @@ class DockerSandbox(Sandbox):
 
         timeout = request.timeout_seconds or self.config.timeout_seconds
 
-        args = ["docker", "exec", "-i"]
+        args = ["docker", "exec"]
         if request.working_directory:
             args.extend(["-w", request.working_directory])
 

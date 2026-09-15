@@ -269,27 +269,20 @@ class TestExecuteEndpointStatusCodes:
         assert "duration" in body
 
     def test_unconfigured_llm_returns_503(self) -> None:
-        """If the LLM factory raises LLMConfigurationError, /execute returns 503.
-
-        We patch create_llm_client inside _build_orchestrator and provide a
-        real (but non-existent) path so workspace validation passes first.
-        """
-        import tempfile
-
+        """If the LLM factory raises LLMConfigurationError, /execute returns 503."""
         from forgeai.api.main import app
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            client = TestClient(app, raise_server_exceptions=False)
-            with patch(
-                "forgeai.api.main.create_llm_client",
-                side_effect=LLMConfigurationError("FORGEAI_OMNIROUTE_BASE_URL is not configured."),
-            ):
-                resp = client.post(
-                    "/execute",
-                    json={"task": "do something", "workspace_root": tmpdir},
-                )
-            assert resp.status_code == 503
-            assert "OMNIROUTE" in resp.json()["detail"]
+    
+        client = TestClient(app, raise_server_exceptions=False)
+        with (
+            patch("forgeai.api.main.create_llm_client", side_effect=LLMConfigurationError("FORGEAI_OMNIROUTE_BASE_URL is not configured.")),
+            patch("forgeai.api.main.validate_workspace", return_value=Path("/valid")),
+        ):
+            resp = client.post(
+                "/execute",
+                json={"task": "do something", "workspace_root": "/valid"},
+            )
+        assert resp.status_code == 503
+        assert "OMNIROUTE" in resp.json()["detail"]
 
 
 class TestHealthEndpoint:

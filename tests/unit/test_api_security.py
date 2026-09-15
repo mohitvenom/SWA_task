@@ -32,7 +32,16 @@ from fastapi.testclient import TestClient
 from forgeai.agents.models import ExecutionResult, ExecutionStatus
 from forgeai.api.workspace import WorkspaceAuthorizationError, validate_workspace
 from forgeai.config.settings import settings
+from collections.abc import Generator
 
+@pytest.fixture(autouse=True)
+def _reset_allowed_workspace_roots() -> Generator[None, None, None]:
+    original = settings.allowed_workspace_roots
+    settings.allowed_workspace_roots = []
+    try:
+        yield
+    finally:
+        settings.allowed_workspace_roots = original
 
 # ---------------------------------------------------------------------------
 # Helpers
